@@ -1,0 +1,5 @@
+To install simply
+
+perl Makefile.pl
+make
+make install

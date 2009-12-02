@@ -1,0 +1,138 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use 5.008;
+
+use LWP;
+use Text::CSV ();
+use IO::File ();
+use Getopt::Long;
+use File::Spec ();
+
+our $VERSION = '0.01';
+
+## ## Argument Processing ## ##
+
+my $col_images = 'images';
+my $output_dir = '.';
+my $rename_to  = 'vin';
+my $col_vin    = 'vin';
+my $col_stock  = 'stock';
+my @files;
+
+GetOptions(
+	'file=s'           => \@files
+	, 'column-image=s' => \$col_images
+	, 'column-vin=s'   => \$col_vin
+	, 'column-stock=s' => \$col_stock
+	, 'rename-to=s'    => \$rename_to
+	, 'output-dir=s'   => \$output_dir
+);
+
+die "Invalid value sent to rename-to only accepts 'stock' or  'vin'\n"
+	if $rename_to !~ /stock|vin/
+;
+
+die "No 'file' provided as an argument\n"
+	unless @files
+;
+
+## ## End Argument Processing ## ##
+
+@files = File::Spec->no_upwards( @files );
+
+my $ua = LWP::UserAgent->new;
+
+foreach my $file ( @files ) {
+
+	die "File [$file] doesn't exist\n"
+		unless -e $file
+	;
+
+	my $csv = Text::CSV->new({ binary => 1 });
+
+	my $fh = IO::File->new( $file, 'r' );
+	
+	$csv->parse( $fh->getline );
+	$csv->column_names( $csv->fields );
+
+	while ( my $row = $csv->getline_hr($fh) ) {
+
+		my $count = 0;
+		foreach my $img ( split '\|', $row->{$col_images} ) {
+			$count++;
+
+			$img =~ /.*\.(.+)$/;
+			my $ext = $1;
+		
+			my $dest;
+			if ( $rename_to eq 'stock' ) {
+				$dest = $row->{$col_stock} . "-$count.$ext";
+			}
+			elsif ( $rename_to eq 'vin' ) {
+				$dest = $row->{$col_vin} . "-$count.$ext";
+			}
+
+			my $resp = $ua->mirror(
+				$img
+				, File::Spec->catfile( $output_dir, $dest)
+			);
+			printf ( "%s Downloaded [%s] to [%s]\n", $resp->code, $img, $dest );
+		
+		}
+
+	}
+
+
+}
+
+__END__
+
+=head1 NAME
+
+Dealermade URL Downloader script
+
+=head1 SYNOPSIS
+
+download_pictures [--column-images=s] [--column-vin=s] [--column-stock=s]
+  [--rename-to=vin|stock] [--file filename] --file filename
+
+=head1 DESCRIPTION
+
+Takes the following arguments:
+
+=over 4
+
+=item
+
+B<file>
+
+required - specifying the file to process, you can supply more then one, ex C<--file foo --file bar>
+
+=item
+
+B<column-vin>, B<column-images>, B<column-stock>
+
+optional - specifiying the column name
+
+=item
+
+B<rename-to>
+
+what to rename them to, valid inputs are I<vin> or I<stock>
+
+=back
+
+=head1 LICENSE
+
+GPL version 3.0 or greater.
+
+=head1 AUTHOR
+
+Evan Carroll L<evan@dealermade.com>
+
+=head1 COPYRIGHT
+
+Dealermade
+
+=cut
