@@ -2,6 +2,7 @@ use inc::Module::Install;
 
 name 'dm_download_pictures';
 author   q{Evan Carroll <evan@dealermade.com>};
+version '0.02';
 license  'gpl';
 
 requires 'LWP';
