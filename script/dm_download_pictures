@@ -1,23 +1,27 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use 5.008;
+use 5.010;
 
 use LWP;
 use Text::CSV ();
 use IO::File ();
 use Getopt::Long;
 use File::Spec ();
+use Parallel::ForkManager ();
 
 our $VERSION = '0.01';
 
 ## ## Argument Processing ## ##
 
-my $col_images = 'images';
-my $output_dir = '.';
-my $rename_to  = 'vin';
-my $col_vin    = 'vin';
-my $col_stock  = 'stock';
+my $col_images   = 'images';
+my $output_dir   = '.';
+my $rename_to    = 'vin';
+my $col_vin      = 'vin';
+my $col_stock    = 'stock';
+my $max_process  = 5;
+my $csv_sep_char = ',';
+my $image_sep_char = '|';
 my @files;
 
 GetOptions(
@@ -27,6 +31,9 @@ GetOptions(
 	, 'column-stock=s' => \$col_stock
 	, 'rename-to=s'    => \$rename_to
 	, 'output-dir=s'   => \$output_dir
+	, 'max_process=i'  => \$max_process
+	, 'csv-sep-char=s' => \$csv_sep_char
+	, 'image-sep-char=s' => \$image_sep_char
 );
 
 die "Invalid value sent to rename-to only accepts 'stock' or  'vin'\n"
@@ -43,28 +50,57 @@ die "No 'file' provided as an argument\n"
 
 my $ua = LWP::UserAgent->new;
 
+my $pm = Parallel::ForkManager->new($max_process);
+
 foreach my $file ( @files ) {
 
 	die "File [$file] doesn't exist\n"
 		unless -e $file
 	;
 
-	my $csv = Text::CSV->new({ binary => 1 });
+	my $csv = Text::CSV->new({ binary => 1 , sep_char => $csv_sep_char });
 
 	my $fh = IO::File->new( $file, 'r' );
-	
+
 	$csv->parse( $fh->getline );
-	$csv->column_names( $csv->fields );
+	my @cols = $csv->fields;
+	$csv->column_names( @cols );
+
+	given ( $rename_to ) {
+		when ( 'stock' ) {
+			die sprintf (
+				"Unable to rename_to '%s' because 'column-%s' is set to [%s], which isn't in file [%s]"
+				, ('stock')x2
+				, $col_stock
+				, join ', or', @files
+			)
+				unless grep $_ eq $col_vin, @cols
+			;
+		}
+		when ( 'vin' ) {
+			die sprintf (
+				"Unable to rename_to '%s' because 'column-%s' is set to [%s], which isn't in file [%s]"
+				, ('vin')x2
+				, $col_vin
+				, join ', or', @files
+			)
+				unless grep $_ eq $col_vin, @cols
+			;
+		}
+	}
 
 	while ( my $row = $csv->getline_hr($fh) ) {
 
 		my $count = 0;
-		foreach my $img ( split '\|', $row->{$col_images} ) {
+
+		foreach my $img ( split sprintf( '\s*%s\s*', quotemeta $image_sep_char ), $row->{$col_images} ) {
 			$count++;
+
+			my $pid = $pm->start and next;
 
 			$img =~ /.*\.(.+)$/;
 			my $ext = $1;
-		
+
 			my $dest;
 			if ( $rename_to eq 'stock' ) {
 				$dest = $row->{$col_stock} . "-$count.$ext";
@@ -73,13 +109,16 @@ foreach my $file ( @files ) {
 				$dest = $row->{$col_vin} . "-$count.$ext";
 			}
 
-			my $resp = $ua->mirror(
-				$img
-				, File::Spec->catfile( $output_dir, $dest)
-			);
+			my $abs_dest = File::Spec->catfile( $output_dir, $dest);
+
+			my $resp = $ua->mirror( $img, $abs_dest );
 			printf ( "%s Downloaded [%s] to [%s]\n", $resp->code, $img, $dest );
-		
+
+			$pm->finish;
+
 		}
+
+		$pm->wait_all_children;
 
 	}
 
@@ -94,8 +133,11 @@ Dealermade URL Downloader script
 
 =head1 SYNOPSIS
 
-download_pictures [--column-images=s] [--column-vin=s] [--column-stock=s]
-  [--rename-to=vin|stock] [--file filename] --file filename
+download_pictures
+	[--column-images=s] [--column-vin=s] [--column-stock=s] [--rename-to=vin|stock]
+	[--max-processes=i]
+	[--csv-sep-char=s] [--image-sep-char=s]
+	[--file filename] --file filename
 
 =head1 DESCRIPTION
 
